@@ -1,9 +1,11 @@
 package fxprocessmanager;
 
 import com.sun.javafx.PlatformUtil;
-import fxprocessmanager.model.Process;
-import fxprocessmanager.model.ProcessPriority;
-import fxprocessmanager.storage.FXProcessManagerState;
+import fxprocessmanager.process.Process;
+import fxprocessmanager.process.ProcessInstance;
+import fxprocessmanager.process.ProcessManager;
+import fxprocessmanager.process.ProcessPriority;
+import fxprocessmanager.process.ProcessState;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -29,7 +31,9 @@ import javafx.scene.control.DialogEvent;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.SingleSelectionModel;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
@@ -38,14 +42,16 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 public class FXProcessManager extends Application {
 
     private static final Random random = new Random();
     private final FXProcessManagerState state;
+    private final ProcessManager pm;
     private VBox root;
     private ObservableList<Node> children;
-    private ObservableList<String> inactiveProcesses;
+    private ObservableList<String> processNames;
     private ArrayList<Integer> processIndices;
 
     public FXProcessManager() throws Exception {
@@ -68,6 +74,7 @@ public class FXProcessManager extends Application {
         }
         file = dirPath.resolve("state").toFile();
         this.state = new FXProcessManagerState(file);
+        this.pm = this.state.getProcessManager();
     }
 
     @Override
@@ -80,6 +87,7 @@ public class FXProcessManager extends Application {
         Scene scene = new Scene(root, 640, 480);
         primaryStage.setTitle("FXProcessManager");
         primaryStage.setScene(scene);
+        primaryStage.setOnCloseRequest((WindowEvent event) -> pm.destroy());
         primaryStage.show();
         root.requestFocus();
     }
@@ -87,7 +95,7 @@ public class FXProcessManager extends Application {
     private void initInactiveProcessesPane() {
         VBox vbox = new VBox();
         vbox.setPadding(new Insets(10));
-        TitledPane titledPane = new TitledPane("Procesos fuera de ejecución", vbox);
+        TitledPane titledPane = new TitledPane("Lista de procesos", vbox);
 
         Label label = new Label("Procesos");
         Process[] processes = state.getProcesses();
@@ -95,10 +103,10 @@ public class FXProcessManager extends Application {
         for (int i = 0; i < processes.length; i++) {
             processIndices.add(i);
         }
-        inactiveProcesses = FXCollections.observableArrayList(
+        processNames = FXCollections.observableArrayList(
             Arrays.stream(processes).map(p -> p.getName()).collect(Collectors.toList())
         );
-        ComboBox comboBox = new ComboBox(inactiveProcesses);
+        ComboBox comboBox = new ComboBox(processNames);
         SingleSelectionModel selectionModel = comboBox.getSelectionModel();
         comboBox.setPromptText("Seleccione un proceso");
         comboBox.setMaxWidth(Double.MAX_VALUE);
@@ -111,7 +119,8 @@ public class FXProcessManager extends Application {
         Button btn1 = new Button("Ejecutar");
         btn1.setMinWidth(100);
         btn1.setOnAction((ActionEvent event) -> {
-            throw new UnsupportedOperationException("Not implemented yet");
+            int processIndex = processIndices.get(selectionModel.getSelectedIndex());
+            pm.start(state.getProcess(processIndex), ProcessPriority.NORMAL, 100, 10);
         });
 
         Button btn2 = new Button("Añadir proceso");
@@ -132,12 +141,9 @@ public class FXProcessManager extends Application {
                 return;
             }
 
-            ProcessPriority priority = ProcessPriority.getValue(random.nextInt(ProcessPriority.count));
-            int memoryUsage = 100 + random.nextInt(201);
-            int processTime = 10 + random.nextInt(41);
-            Process proc = new Process(name, priority, memoryUsage, processTime);
+            Process proc = new Process(name);
             state.addProcess(proc);
-            inactiveProcesses.add(name);
+            processNames.add(name);
             processIndices.add(state.getProcessCount() - 1);
             try {
                 state.saveState();
@@ -156,8 +162,8 @@ public class FXProcessManager extends Application {
 
             int processIndex = processIndices.get(index);
             state.removeProcess(processIndex);
-            inactiveProcesses.remove(index);
-            int optionCount = inactiveProcesses.size();
+            processNames.remove(index);
+            int optionCount = processNames.size();
             selectionModel.selectNext();
             try {
                 state.saveState();
@@ -207,6 +213,18 @@ public class FXProcessManager extends Application {
         VBox.setVgrow(progressBar, Priority.ALWAYS);
         progressPane.getChildren().addAll(progressLabel, progressBar);
         controls.getChildren().addAll(btn1, btn2, progressPane);
+
+        pm.watch((ArrayList<ProcessState> changes) -> {
+            ArrayList<ProcessInstance> instances = new ArrayList<>();
+            ProcessInstance executingInstance = pm.getExecutingInstance();
+            if (executingInstance != null) {
+                instances.add(executingInstance);
+            }
+            instances.addAll(pm.lists.get(ProcessState.READY));
+            instances.addAll(pm.lists.get(ProcessState.SUSPENDED));
+            instances.addAll(pm.lists.get(ProcessState.INACTIVE));
+            System.out.println(changes);
+        });
 
         vbox.getChildren().addAll(cycleTable, controls);
         vbox.setPadding(Insets.EMPTY);

@@ -1,7 +1,7 @@
-package fxprocessmanager.storage;
+package fxprocessmanager;
 
-import fxprocessmanager.model.Process;
-import fxprocessmanager.model.ProcessPriority;
+import fxprocessmanager.process.Process;
+import fxprocessmanager.process.ProcessManager;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -14,10 +14,12 @@ import java.util.logging.Logger;
 public class FXProcessManagerState {
     private final File file;
     private final ArrayList<Process> processes;
+    private final ProcessManager pm;
 
     public FXProcessManagerState(File file) {
         this.file = file;
         this.processes = new ArrayList<>();
+        this.pm = new ProcessManager(5, 1000L);
         try {
             this.loadData();
         } catch (IOException ex) {
@@ -50,23 +52,13 @@ public class FXProcessManagerState {
                         if (length == -1) {
                             this.throwInvalidFormatException();
                         }
+
                         byte[] processNameBytes = new byte[length];
                         if (fis.read(processNameBytes) == -1) {
                             this.throwInvalidFormatException();
                         }
-                        int priority = fis.read();
-                        if (priority == -1) {
-                            this.throwInvalidFormatException();
-                        }
-                        int memoryUsage = fis.read() + 100;
-                        if (memoryUsage == -1) {
-                            this.throwInvalidFormatException();
-                        }
-                        int processTime = fis.read();
-                        if (processTime == -1) {
-                            this.throwInvalidFormatException();
-                        }
-                        Process p = new Process(new String(processNameBytes), ProcessPriority.getValue(priority), memoryUsage, processTime);
+
+                        Process p = new Process(new String(processNameBytes));
                         processes.add(p);
                     }
 
@@ -97,9 +89,6 @@ public class FXProcessManagerState {
                 String name = p.getName();
                 fos.write(name.length());
                 fos.write(name.getBytes());
-                fos.write(p.getPriority().ordinal());
-                fos.write(p.getMemoryUsage() - 100);
-                fos.write(p.getProcessTime());
             }
         } catch (FileNotFoundException ex) {
             Logger.getLogger(FXProcessManagerState.class.getName()).log(Level.SEVERE, null, ex);
@@ -129,5 +118,9 @@ public class FXProcessManagerState {
 
     public int getProcessCount() {
         return processes.size();
+    }
+
+    public ProcessManager getProcessManager() {
+        return pm;
     }
 }

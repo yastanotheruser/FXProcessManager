@@ -1,4 +1,4 @@
-package fxprocessmanager.model;
+package fxprocessmanager.process;
 
 public enum ProcessPriority {
     LOW, NORMAL, HIGH, HIGHEST;
