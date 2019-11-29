@@ -14,7 +14,7 @@ public class ProcessInstance {
             throw new IllegalArgumentException("Process cannot be null");
         }
         if (pid < 1 || pid > 0xffff) {
-            throw new IllegalArgumentException("PID must be a value 1 and 65535");
+            throw new IllegalArgumentException("PID must be a value between 1 and 65535");
         }
         if (priority == null) {
             throw new IllegalArgumentException("Process priority cannot be null");
@@ -57,5 +57,10 @@ public class ProcessInstance {
 
     public long getHash() {
         return hash;
+    }
+
+    public double getProgress() {
+        double executed = info.getExecuted();
+        return executed / processTime;
     }
 }

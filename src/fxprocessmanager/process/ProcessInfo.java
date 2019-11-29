@@ -1,15 +1,19 @@
 package fxprocessmanager.process;
 
+import java.util.Date;
+
 public class ProcessInfo {
     private ProcessInstance instance;
     private ProcessState state;
     private int executed;
+    private Date lastExecuted;
     private boolean reading;
 
     public ProcessInfo(ProcessInstance instance, ProcessState state, int executed, boolean reading) {
         this.state = state;
         this.instance = instance;
         this.executed = executed;
+        this.lastExecuted = null;
         this.reading = reading;
     }
 
@@ -46,7 +50,10 @@ public class ProcessInfo {
             result = processTime;
         }
 
-        executed = result;
+        if (result != executed) {
+            executed = result;
+            lastExecuted = new Date();
+        }
     }
 
     public boolean isReading() {
@@ -55,5 +62,9 @@ public class ProcessInfo {
 
     public void setReadState(boolean reading) {
         this.reading = reading;
+    }
+
+    public Date getLastExecuted() {
+        return lastExecuted;
     }
 }

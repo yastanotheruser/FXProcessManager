@@ -19,7 +19,7 @@ public class FXProcessManagerState {
     public FXProcessManagerState(File file) {
         this.file = file;
         this.processes = new ArrayList<>();
-        this.pm = new ProcessManager(5, 1000L);
+        this.pm = new ProcessManager(5);
         try {
             this.loadData();
         } catch (IOException ex) {

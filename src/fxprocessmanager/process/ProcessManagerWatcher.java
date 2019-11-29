@@ -1,7 +1,7 @@
 package fxprocessmanager.process;
 
-import java.util.ArrayList;
+import java.util.Set;
 
 public interface ProcessManagerWatcher {
-     public void updated(ArrayList<ProcessState> changes);
+     public void updated(Set<ProcessState> changes);
 }
