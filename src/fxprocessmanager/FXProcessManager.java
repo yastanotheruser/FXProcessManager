@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -21,8 +22,12 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import javafx.application.Application;
+import javafx.beans.binding.Bindings;
+import javafx.beans.binding.BooleanBinding;
+import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.collections.ObservableSet;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -36,12 +41,14 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.SingleSelectionModel;
 import javafx.scene.control.Slider;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TitledPane;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -112,6 +119,25 @@ public class FXProcessManager extends Application {
 
         public long getProcessTime() {
             return processTime;
+        }
+    }
+
+    private static final class ProcessInstanceRowSelectionTableCell extends TableCell {
+        private final CheckBox checkBox = new CheckBox();
+
+        @Override
+        public void updateItem(Object item, boolean empty) {
+            super.updateItem(item, empty);
+            setGraphic(empty ? null : checkBox);
+            this.setAlignment(Pos.CENTER);
+        }
+
+        public CheckBox getCheckBox() {
+            return checkBox;
+        }
+
+        public Boolean isRowSelected() {
+            return checkBox.isSelected();
         }
     }
 
@@ -274,14 +300,21 @@ public class FXProcessManager extends Application {
                 
                 String color = null;
                 ProcessInstance instance = item.getInstance();
-                if (instance.info.getState() == ProcessState.INACTIVE) {
-                    color = "#c7c7c7";
-                } else if (instance.info.getState() == ProcessState.READY) {
-                    color = "#c5e1a5";
-                } else if (instance.info.getState() == ProcessState.SUSPENDED) {
-                    color = "#bbdefb";
-                } else if (instance.info.getState() == ProcessState.EXECUTING) {
-                    color = "#8bc34a";
+                if (null != instance.info.getState()) switch (instance.info.getState()) {
+                    case INACTIVE:
+                        color = "#c7c7c7";
+                        break;
+                    case READY:
+                        color = "#c5e1a5";
+                        break;
+                    case SUSPENDED:
+                        color = "#bbdefb";
+                        break;
+                    case EXECUTING:
+                        color = "#8bc34a";
+                        break;
+                    default:
+                        break;
                 }
 
                 if (color == null) {
@@ -292,8 +325,28 @@ public class FXProcessManager extends Application {
             }
         });
         cycleTable.setPlaceholder(new Label("No existen procesos activos"));
+        cycleTable.setFocusTraversable(false);
+        cycleTable.setItems(FXCollections.observableArrayList());
+        ObservableSet<TableRow> selectionSet = FXCollections.observableSet(new HashSet<>());
+        BooleanBinding emptinessBinding = Bindings.size(cycleTable.getItems()).isEqualTo(0);
+        BooleanBinding selectionEmptinessBinding = Bindings.size(selectionSet).isEqualTo(0);
         TableColumn checkboxColumn = new TableColumn();
-        checkboxColumn.setGraphic(new CheckBox());
+        CheckBox selectAllCheckBox = new CheckBox();
+        selectAllCheckBox.disableProperty().bind(emptinessBinding);
+        checkboxColumn.setGraphic(selectAllCheckBox);
+        checkboxColumn.setCellFactory(column -> {
+            ProcessInstanceRowSelectionTableCell cell = new ProcessInstanceRowSelectionTableCell();
+            CheckBox cb = cell.checkBox;
+            cb.setOnAction(event -> {
+                TableRow row = cell.getTableRow();
+                if (cb.isSelected()) {
+                    selectionSet.add(row);
+                } else {
+                    selectionSet.remove(row);
+                }
+            });
+            return cell;
+        });
         TableColumn pidColumn = new TableColumn("PID");
         pidColumn.setCellValueFactory(new PropertyValueFactory<>("PID"));
         TableColumn processColumn = new TableColumn("Proceso");
@@ -327,14 +380,17 @@ public class FXProcessManager extends Application {
         btn1.setOnAction((ActionEvent event) -> pm.nextTick());
         Button btn2 = new Button("Detener");
         btn2.setMinWidth(100);
+        btn2.disableProperty().bind(emptinessBinding);
         Button btn3 = new Button("Pausar");
         btn3.setMinWidth(100);
+        btn3.disableProperty().bind(emptinessBinding);
         VBox progressPane = new VBox();
         progressPane.setSpacing(10);
         HBox.setHgrow(progressPane, Priority.ALWAYS);
         Label progressLabel = new Label("Tiempo de proceso ejecutado");
         ProgressBar progressBar = new ProgressBar(0);
         progressBar.setMaxWidth(Double.MAX_VALUE);
+        Tooltip progressTooltip = new Tooltip();
         VBox.setVgrow(progressBar, Priority.ALWAYS);
         progressPane.getChildren().addAll(progressLabel, progressBar);
         controls.getChildren().addAll(btn1, btn2, btn3, progressPane);
@@ -343,10 +399,17 @@ public class FXProcessManager extends Application {
             ObservableList<ProcessInstance> instances = FXCollections.observableArrayList();
             ProcessInstance executingInstance = pm.getExecutingInstance();
             if (executingInstance != null) {
+                double progress = executingInstance.getProgress();
+                int executed = executingInstance.info.getExecuted();
+                int total = executingInstance.getProcessTime();
                 instances.add(executingInstance);
-                progressBar.setProgress(executingInstance.getProgress());
+                progressBar.setProgress(progress);
+                Tooltip.install(progressBar, progressTooltip);
+                progressTooltip.setText(Integer.toString(executed) + " / " + Integer.toString(total));
             } else {
                 progressBar.setProgress(0);
+                progressBar.setTooltip(null);
+                Tooltip.uninstall(progressBar, progressTooltip);
             }
             instances.addAll(
                 pm.collections.get(ProcessState.READY)
@@ -356,13 +419,15 @@ public class FXProcessManager extends Application {
             );
             instances.addAll(pm.collections.get(ProcessState.SUSPENDED));
             instances.addAll(pm.collections.get(ProcessState.INACTIVE));
-            cycleTable.setItems(FXCollections.observableArrayList(
-                instances
+            ObservableList<ProcessInstanceRow> rows = cycleTable.getItems();
+            rows.clear();
+            rows.addAll(
+               instances
                     .stream()
                     .sorted(Comparator.comparing(ProcessInstance::getPID))
                     .map(pi -> new ProcessInstanceRow(pi))
                     .collect(Collectors.toList())
-            ));
+            );
         });
 
         vbox.getChildren().addAll(cycleTable, controls);
@@ -376,6 +441,7 @@ public class FXProcessManager extends Application {
         HBox deltaContainer = new HBox();
         deltaContainer.setPadding(new Insets(10));
         deltaContainer.setSpacing(10);
+        deltaContainer.setAlignment(Pos.CENTER);
         Label deltaLabel = new Label("ΔQ");
         Slider deltaSlider = new Slider();
         deltaSlider.setMin(5);
@@ -383,11 +449,16 @@ public class FXProcessManager extends Application {
         deltaSlider.setValue(5);
         deltaSlider.setShowTickLabels(true);
         deltaSlider.setShowTickMarks(true);
+        deltaSlider.setSnapToTicks(true);
         deltaSlider.setMajorTickUnit(5);
-        deltaSlider.setMinorTickCount(1);
+        deltaSlider.setMinorTickCount(4);
         deltaSlider.setBlockIncrement(1);
+        deltaSlider.setPrefWidth(200);
+        deltaSlider.valueProperty().addListener((ObservableValue<? extends Number> observable, Number oldValue, Number newValue) -> {
+            int delta = newValue.intValue();
+            pm.setDelta(delta);
+        });
         deltaContainer.getChildren().addAll(deltaLabel, deltaSlider);
-        HBox.setHgrow(deltaSlider, Priority.ALWAYS);
         vbox.getChildren().addAll(deltaContainer);
         this.children.add(titledPane);
     }

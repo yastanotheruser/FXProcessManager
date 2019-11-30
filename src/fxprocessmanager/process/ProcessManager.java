@@ -19,6 +19,7 @@ public final class ProcessManager {
     private final ArrayList<ProcessInstance> inactiveList;
     private final ArrayList<ProcessInstance> suspendedList;
     private final PriorityQueue<ProcessInstance> readyQueue;
+    private final Set<ProcessInstance> pausedInstances;
     private final Timer timer;
     private final TimerTask tick;
     private int processCount;
@@ -44,6 +45,7 @@ public final class ProcessManager {
         collections.put(ProcessState.SUSPENDED, suspendedList);
         readyQueue = new PriorityQueue<>(hashComparator);
         collections.put(ProcessState.READY, readyQueue);
+        pausedInstances = new HashSet<>();
         processCount = 0;
         executingInstance = null;
         highestPriorityInstance = null;
@@ -97,7 +99,6 @@ public final class ProcessManager {
                 if (executingInstance != null) {
                     ProcessInfo info = executingInstance.info;
                     info.perform(that.delta);
-                    System.out.println(info.getExecuted());
                     if (info.getExecuted() < executingInstance.getProcessTime()) {
                         if (executingInstance != highestPriorityInstance) {
                             info.setState(ProcessState.SUSPENDED);
@@ -167,6 +168,40 @@ public final class ProcessManager {
         Set<ProcessState> changes = new HashSet<>();
         changes.add(ProcessState.INACTIVE);
         dispatchWatchers(changes);
+    }
+
+    public boolean stop(ProcessInstance instance) {
+        if (!instances.remove(instance)) {
+            return false;
+        }
+
+        if (executingInstance == instance) {
+            executingInstance = null;
+        } else {
+            collections.values().forEach(c -> c.remove(instance));
+        }
+
+        if (highestPriorityInstance == instance) {
+            highestPriorityInstance = null;
+        }
+
+        if (isPaused(instance)) {
+            pausedInstances.remove(instance);
+        }
+
+        return true;
+    }
+
+    public boolean pause(ProcessInstance instance) {
+        return pausedInstances.add(instance);
+    }
+
+    public boolean resume(ProcessInstance instance) {
+        return pausedInstances.remove(instance);
+    }
+
+    public boolean isPaused(ProcessInstance instance) {
+        return pausedInstances.contains(instance);
     }
 
     public void nextTick() {
