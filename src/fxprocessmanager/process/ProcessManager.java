@@ -72,6 +72,9 @@ public final class ProcessManager {
                     ProcessInstance[] inactiveArr = new ProcessInstance[inactiveSize];
                     inactiveList.toArray(inactiveArr);
                     for (ProcessInstance pi : inactiveArr) {
+                        if (isPaused(pi)) {
+                            continue;
+                        }
                         if (pi == highestPriorityInstance && next == highestPriorityInstance) {
                             continue;
                         }
@@ -79,6 +82,7 @@ public final class ProcessManager {
                         readyQueue.add(pi);
                     }
                     inactiveList.clear();
+                    inactiveList.addAll(pausedInstances);
                     changes.add(ProcessState.INACTIVE);
                     changes.add(ProcessState.READY);
                 }
@@ -170,15 +174,19 @@ public final class ProcessManager {
         dispatchWatchers(changes);
     }
 
-    public boolean stop(ProcessInstance instance) {
+    public void stop(ProcessInstance instance) {
         if (!instances.remove(instance)) {
-            return false;
+            return;
         }
 
+        Set<ProcessState> changes = new HashSet<>();
         if (executingInstance == instance) {
             executingInstance = null;
+            changes.add(ProcessState.EXECUTING);
         } else {
-            collections.values().forEach(c -> c.remove(instance));
+            ProcessState state = instance.info.getState();
+            collections.get(state).remove(instance);
+            changes.add(state);
         }
 
         if (highestPriorityInstance == instance) {
@@ -189,11 +197,25 @@ public final class ProcessManager {
             pausedInstances.remove(instance);
         }
 
-        return true;
+        dispatchWatchers(changes);
     }
 
-    public boolean pause(ProcessInstance instance) {
-        return pausedInstances.add(instance);
+    public void pause(ProcessInstance instance) {
+        Set<ProcessState> changes = new HashSet<>();
+        ProcessInfo info = instance.info;
+        if (executingInstance != instance) {
+            ProcessState state = info.getState();
+            collections.get(state).remove(instance);
+            changes.add(state);
+        } else {
+            executingInstance = null;
+            changes.add(ProcessState.EXECUTING);
+        }
+        info.setState(ProcessState.INACTIVE);
+        inactiveList.add(instance);
+        changes.add(ProcessState.INACTIVE);
+        pausedInstances.add(instance);
+        dispatchWatchers(changes);
     }
 
     public boolean resume(ProcessInstance instance) {
