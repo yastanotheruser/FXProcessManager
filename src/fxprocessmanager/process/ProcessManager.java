@@ -13,6 +13,7 @@ import java.util.TimerTask;
 
 public final class ProcessManager {
     public static final Comparator<ProcessInstance> hashComparator = Comparator.comparing(ProcessInstance::getHash).reversed();
+    private final ProcessManager self = this;
     private final ArrayList<ProcessInstance> instances;
     public final Map<ProcessState, Collection<ProcessInstance>> collections;
     private final Set<ProcessManagerWatcher> watchers;
@@ -20,8 +21,13 @@ public final class ProcessManager {
     private final ArrayList<ProcessInstance> suspendedList;
     private final PriorityQueue<ProcessInstance> readyQueue;
     private final Set<ProcessInstance> pausedInstances;
-    private final Timer timer;
-    private final TimerTask tick;
+    private final class ProcessManagerTimerTask extends TimerTask {
+        @Override
+        public void run() {
+            nextTick();
+        }
+    }
+    private Timer timer;
     private int processCount;
     private ProcessInstance executingInstance;
     private ProcessInstance highestPriorityInstance;
@@ -51,90 +57,6 @@ public final class ProcessManager {
         highestPriorityInstance = null;
         timer = new Timer();
         ProcessManager that = this;
-        tick = new TimerTask() {
-            @Override
-            public void run() {
-                if (instances.isEmpty()) {
-                    return;
-                }
-
-                Set<ProcessState> changes = new HashSet();
-                ProcessInstance next = null;
-                if (highestPriorityInstance != null) {
-                    if (highestPriorityInstance.info.getState() == ProcessState.INACTIVE) {
-                        next = highestPriorityInstance;
-                    }
-                } else {
-                    next = readyQueue.poll();
-                }
-                int inactiveSize = inactiveList.size();
-                if (inactiveSize > 0) {
-                    ProcessInstance[] inactiveArr = new ProcessInstance[inactiveSize];
-                    inactiveList.toArray(inactiveArr);
-                    for (ProcessInstance pi : inactiveArr) {
-                        if (isPaused(pi)) {
-                            continue;
-                        }
-                        if (pi == highestPriorityInstance && next == highestPriorityInstance) {
-                            continue;
-                        }
-                        pi.info.setState(ProcessState.READY);
-                        readyQueue.add(pi);
-                    }
-                    inactiveList.clear();
-                    inactiveList.addAll(pausedInstances);
-                    changes.add(ProcessState.INACTIVE);
-                    changes.add(ProcessState.READY);
-                }
-
-                int suspendedSize = suspendedList.size();
-                if (suspendedSize > 0) {
-                    ProcessInstance[] suspendedArr = new ProcessInstance[suspendedSize];
-                    suspendedList.toArray(suspendedArr);
-                    for (ProcessInstance pi : suspendedArr) {
-                        pi.info.setState(ProcessState.READY);
-                        readyQueue.add(pi);
-                    }
-                    suspendedList.clear();
-                    changes.add(ProcessState.SUSPENDED);
-                    changes.add(ProcessState.READY);
-                }
-
-                if (executingInstance != null) {
-                    ProcessInfo info = executingInstance.info;
-                    info.perform(that.delta);
-                    if (info.getExecuted() < executingInstance.getProcessTime()) {
-                        if (executingInstance != highestPriorityInstance) {
-                            info.setState(ProcessState.SUSPENDED);
-                            suspendedList.add(executingInstance);
-                            changes.add(ProcessState.SUSPENDED);
-                        }
-                    } else {
-                        instances.remove(executingInstance);
-                        if (executingInstance == highestPriorityInstance) {
-                            executingInstance = null;
-                            highestPriorityInstance = null;
-                        }
-                    }
-                    if (highestPriorityInstance == null) {
-                        executingInstance = null;
-                    }
-                    changes.add(ProcessState.EXECUTING);
-                }
-
-                if (next != null) {
-                    next.info.setState(ProcessState.EXECUTING);
-                    executingInstance = next;
-                    changes.add(ProcessState.EXECUTING);
-                }
-
-                if (changes.isEmpty()) {
-                    return;
-                }
-
-                dispatchWatchers(changes);
-            }
-        };
         setTickInterval(tickInterval);
         this.delta = delta;
     }
@@ -156,13 +78,9 @@ public final class ProcessManager {
         return highestPriorityInstance;
     }
 
-    public void start(Process process, ProcessPriority priority, int memoryUsage, int processTime) {
+    public ProcessInstance start(Process process, ProcessPriority priority, int memoryUsage, int processTime) {
         processCount++;
         boolean hasHighestPriority = priority == ProcessPriority.HIGHEST;
-        if (hasHighestPriority && highestPriorityInstance != null) {
-            priority = ProcessPriority.HIGH;
-        }
-
         ProcessInstance instance = new ProcessInstance(process, processCount, priority, memoryUsage, processTime);
         if (hasHighestPriority && highestPriorityInstance == null) {
             highestPriorityInstance = instance;
@@ -172,6 +90,7 @@ public final class ProcessManager {
         Set<ProcessState> changes = new HashSet<>();
         changes.add(ProcessState.INACTIVE);
         dispatchWatchers(changes);
+        return instance;
     }
 
     public void stop(ProcessInstance instance) {
@@ -227,7 +146,93 @@ public final class ProcessManager {
     }
 
     public void nextTick() {
-        tick.run();
+        if (instances.isEmpty()) {
+            return;
+        }
+
+        Set<ProcessState> changes = new HashSet();
+        ProcessInstance next = null;
+        if (highestPriorityInstance != null) {
+            if (highestPriorityInstance.info.getState() == ProcessState.INACTIVE) {
+                next = highestPriorityInstance;
+            }
+        } else {
+            next = readyQueue.poll();
+            if (next != null && next.getPriority() == ProcessPriority.HIGHEST) {
+                highestPriorityInstance = next;
+            }
+        }
+
+        int inactiveSize = inactiveList.size();
+        if (inactiveSize > 0) {
+            ProcessInstance[] inactiveArr = new ProcessInstance[inactiveSize];
+            inactiveList.toArray(inactiveArr);
+            for (ProcessInstance pi : inactiveArr) {
+                if (isPaused(pi)) {
+                    continue;
+                }
+                if (pi == highestPriorityInstance && next == highestPriorityInstance) {
+                    continue;
+                }
+                if (pi.info.isReading()) {
+                    pi.info.setReadState(false);
+                    continue;
+                }
+                pi.info.setState(ProcessState.READY);
+                readyQueue.add(pi);
+            }
+            inactiveList.clear();
+            inactiveList.addAll(pausedInstances);
+            changes.add(ProcessState.INACTIVE);
+            changes.add(ProcessState.READY);
+        }
+
+        int suspendedSize = suspendedList.size();
+        if (suspendedSize > 0) {
+            ProcessInstance[] suspendedArr = new ProcessInstance[suspendedSize];
+            suspendedList.toArray(suspendedArr);
+            for (ProcessInstance pi : suspendedArr) {
+                pi.info.setState(ProcessState.READY);
+                readyQueue.add(pi);
+            }
+            suspendedList.clear();
+            changes.add(ProcessState.SUSPENDED);
+            changes.add(ProcessState.READY);
+        }
+
+        if (executingInstance != null) {
+            ProcessInfo info = executingInstance.info;
+            info.perform(self.delta);
+            if (info.getExecuted() < executingInstance.getProcessTime()) {
+                if (executingInstance != highestPriorityInstance) {
+                    info.setState(ProcessState.SUSPENDED);
+                    suspendedList.add(executingInstance);
+                    changes.add(ProcessState.SUSPENDED);
+                }
+            } else {
+                instances.remove(executingInstance);
+                if (executingInstance == highestPriorityInstance) {
+                    executingInstance = null;
+                    highestPriorityInstance = null;
+                }
+            }
+            if (highestPriorityInstance == null) {
+                executingInstance = null;
+            }
+            changes.add(ProcessState.EXECUTING);
+        }
+
+        if (next != null) {
+            next.info.setState(ProcessState.EXECUTING);
+            executingInstance = next;
+            changes.add(ProcessState.EXECUTING);
+        }
+
+        if (changes.isEmpty()) {
+            return;
+        }
+
+        dispatchWatchers(changes);
     }
 
     public void setTickInterval(Long tickInterval) {
@@ -237,7 +242,8 @@ public final class ProcessManager {
         }
         this.tickInterval = tickInterval;
         if (tickInterval != null) {
-            timer.scheduleAtFixedRate(tick, 0, tickInterval);
+            timer = new Timer();
+            timer.scheduleAtFixedRate(new ProcessManagerTimerTask(), 0, tickInterval);
         }
     }
 

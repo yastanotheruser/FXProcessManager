@@ -36,6 +36,8 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Alert.AlertType;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
@@ -53,6 +55,8 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -93,6 +97,7 @@ public class FXProcessManager extends Application {
         private final String stateString;
         private final String priorityString;
         private final int processTime;
+        private final String isReadingString;
 
         public ProcessInstanceRow(ProcessInstance instance) {
             if (!instanceCheckBoxes.containsKey(instance)) {
@@ -105,6 +110,11 @@ public class FXProcessManager extends Application {
             this.stateString = getLocaleStateString(instance.info.getState());
             this.priorityString = getLocalePriorityString(instance.getPriority());
             this.processTime = instance.getProcessTime();
+            if (instance.info.isReading()) {
+                this.isReadingString = "Sí";
+            } else {
+                this.isReadingString = "No";
+            }
         }
 
         public ProcessInstance getInstance() {
@@ -133,6 +143,10 @@ public class FXProcessManager extends Application {
 
         public long getProcessTime() {
             return processTime;
+        }
+
+        public String getIsReadingString() {
+            return isReadingString;
         }
     }
 
@@ -188,7 +202,7 @@ public class FXProcessManager extends Application {
         initActiveProcessesPane();
         initOptionsPane();
 
-        Scene scene = new Scene(root, 960, 480);
+        Scene scene = new Scene(root, 960, 720);
         primaryStage.setTitle("FXProcessManager");
         primaryStage.setScene(scene);
         primaryStage.setOnCloseRequest((WindowEvent event) -> pm.destroy());
@@ -229,12 +243,13 @@ public class FXProcessManager extends Application {
             }
 
             int processIndex = processIndices.get(index);
-            pm.start(
+            ProcessInstance instance = pm.start(
                 state.getProcess(processIndex),
                 ProcessPriority.getValue(random.nextInt(ProcessPriority.count)),
                 100 + random.nextInt(201),
                 10 + random.nextInt(41)
             );
+            instance.info.setReadState(random.nextBoolean());
         });
 
         Button btn2 = new Button("Añadir proceso");
@@ -393,13 +408,16 @@ public class FXProcessManager extends Application {
         priorityColumn.setCellValueFactory(new PropertyValueFactory<>("priorityString"));
         TableColumn ptimeColumn = new TableColumn("Tiempo de proceso");
         ptimeColumn.setCellValueFactory(new PropertyValueFactory<>("processTime"));
+        TableColumn inputColumn = new TableColumn("Interacción");
+        inputColumn.setCellValueFactory(new PropertyValueFactory<>("isReadingString"));
         cycleTable.getColumns().addAll(
             checkboxColumn,
             pidColumn,
             processColumn,
             stateColumn,
             priorityColumn,
-            ptimeColumn
+            ptimeColumn,
+            inputColumn
         );
         int columnCount = cycleTable.getColumns().size();
         cycleTable.getColumns().forEach(c -> {
@@ -413,14 +431,16 @@ public class FXProcessManager extends Application {
         controls.setAlignment(Pos.CENTER);
         Button btn1 = new Button("Avanzar");
         btn1.setMinWidth(100);
-        btn1.setOnAction((ActionEvent event) -> pm.nextTick());
+        btn1.setOnAction(event -> pm.nextTick());
         Button btn2 = new Button("Detener");
         btn2.setMinWidth(100);
         btn2.disableProperty().bind(selectionEmptinessBinding);
         btn2.setOnAction(event -> {
-            for (ProcessInstanceRow row : selectionSet) {
+            ProcessInstanceRow[] selectionSetItems = new ProcessInstanceRow[selectionSet.size()];
+            selectionSet.toArray(selectionSetItems);
+            for (ProcessInstanceRow row : selectionSetItems) {
                 pm.stop(row.instance);
-                row.checkBox.setSelected(false);
+                row.getCheckBox().setSelected(false);
             }
             selectionSet.clear();
         });
@@ -428,7 +448,9 @@ public class FXProcessManager extends Application {
         btn3.setMinWidth(100);
         btn3.disableProperty().bind(selectionEmptinessBinding);
         btn3.setOnAction(event -> {
-            for (ProcessInstanceRow row : selectionSet) {
+            ProcessInstanceRow[] selectionSetItems = new ProcessInstanceRow[selectionSet.size()];
+            selectionSet.toArray(selectionSetItems);
+            for (ProcessInstanceRow row : selectionSetItems) {
                 pm.pause(row.instance);
                 row.getCheckBox().setSelected(false);
             }
@@ -495,6 +517,47 @@ public class FXProcessManager extends Application {
     public void initOptionsPane() {
         VBox vbox = new VBox();
         TitledPane titledPane = new TitledPane("Opciones", vbox);
+        HBox timeContainer = new HBox();
+        timeContainer.setPadding(new Insets(10));
+        timeContainer.setSpacing(10);
+        timeContainer.setAlignment(Pos.CENTER);
+        Label timeLabel = new Label("Tiempo de avance (milisegundos)");
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setContentText("Nuevo tiempo de avance");
+        dialog.setHeaderText("Tiempo de avance");
+        dialog.setTitle("FXProcessManager");
+        TextField timeField = new TextField();
+        timeField.setPrefWidth(50);
+        timeField.setAlignment(Pos.CENTER);
+        timeField.setText("0");
+        timeField.setEditable(false);
+        timeField.setOnMouseClicked((MouseEvent event) -> {
+            if (event.getButton() != MouseButton.PRIMARY) {
+                return;
+            }
+            TextField field = dialog.getEditor();
+            field.setText(timeField.getText());
+            dialog.show();
+            field.requestFocus();
+        });
+        Alert errorAlert = new Alert(AlertType.ERROR);
+        errorAlert.setContentText("Entrada inválida");
+        dialog.setOnCloseRequest((DialogEvent event) -> {
+            String input = dialog.getResult();
+            if (input == null || input.length() == 0) {
+                return;
+            }
+
+            try {
+                Long time = Long.valueOf(input);
+                pm.setTickInterval((time > 0) ? time : null);
+                timeField.setText(Long.toString(time));
+            } catch (Exception ex) {
+                errorAlert.show();
+                Logger.getLogger(FXProcessManager.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        });
+        timeContainer.getChildren().addAll(timeLabel, timeField);
         HBox deltaContainer = new HBox();
         deltaContainer.setPadding(new Insets(10));
         deltaContainer.setSpacing(10);
@@ -512,11 +575,10 @@ public class FXProcessManager extends Application {
         deltaSlider.setBlockIncrement(1);
         deltaSlider.setPrefWidth(200);
         deltaSlider.valueProperty().addListener((ObservableValue<? extends Number> observable, Number oldValue, Number newValue) -> {
-            int delta = newValue.intValue();
-            pm.setDelta(delta);
+            pm.setDelta(newValue.intValue());
         });
         deltaContainer.getChildren().addAll(deltaLabel, deltaSlider);
-        vbox.getChildren().addAll(deltaContainer);
+        vbox.getChildren().addAll(timeContainer, deltaContainer);
         this.children.add(titledPane);
     }
 
