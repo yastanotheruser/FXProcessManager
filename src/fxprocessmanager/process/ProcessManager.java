@@ -134,7 +134,14 @@ public final class ProcessManager {
     }
 
     public boolean resume(ProcessInstance instance) {
-        return pausedInstances.remove(instance);
+        if (!pausedInstances.remove(instance)) {
+            return false;
+        }
+        
+        Set<ProcessState> changes = new HashSet<>();
+        changes.add(instance.info.getState());
+        dispatchWatchers(changes);
+        return true;
     }
 
     public boolean isPaused(ProcessInstance instance) {
@@ -148,7 +155,6 @@ public final class ProcessManager {
 
         Set<ProcessState> changes = new HashSet();
         ProcessInstance next = null;
-        System.out.println("" + highestPriorityInstance);
         if (highestPriorityInstance == null) {
             next = readyQueue.poll();
             if (next != null) {

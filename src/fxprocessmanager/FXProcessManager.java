@@ -20,18 +20,22 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.beans.binding.IntegerBinding;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.ObservableSet;
+import javafx.collections.SetChangeListener;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -345,11 +349,14 @@ public class FXProcessManager extends Application {
                     }
                 }
 
-                if (color == null) {
-                    setStyle("");
+                String style = "";
+                if (color != null) {
+                    style += "-fx-background-color: " + color + ";";
                 }
-
-                setStyle("-fx-background-color: " + color + ";");
+                if (pm.isPaused(instance)) {
+                    style += "-fx-opacity: 0.75;";
+                }
+                setStyle(style);
             }
         });
         procTable.setPlaceholder(new Label("No existen procesos activos"));
@@ -360,13 +367,11 @@ public class FXProcessManager extends Application {
         IntegerBinding selectionLengthBinding = Bindings.size(selectionSet);
         BooleanBinding emptinessBinding = itemsLengthBinding.isEqualTo(0);
         BooleanBinding selectionEmptinessBinding = selectionLengthBinding.isEqualTo(0);
-        BooleanBinding selectionCompletenessBinding = selectionLengthBinding.isEqualTo(itemsLengthBinding);
+        BooleanBinding selectionCompletenessBinding = selectionLengthBinding.isEqualTo(itemsLengthBinding)
+                .and(selectionLengthBinding.greaterThan(0));
         TableColumn checkboxColumn = new TableColumn();
         CheckBox selectAllCheckBox = new CheckBox();
         selectAllCheckBox.disableProperty().bind(emptinessBinding);
-        emptinessBinding.addListener(v -> {
-            System.out.println("your" + v);
-        });
         selectAllCheckBox.setOnAction(event -> {
             boolean selected = selectAllCheckBox.isSelected();
             ObservableList<ProcessInstanceRow> items = procTable.getItems();
@@ -380,13 +385,14 @@ public class FXProcessManager extends Application {
                 }
             }
         });
+        checkboxColumn.setSortable(false);
         checkboxColumn.setGraphic(selectAllCheckBox);
         checkboxColumn.setCellValueFactory(new PropertyValueFactory<>("checkBox"));
         checkboxColumn.setCellFactory(column -> {
             ProcessInstanceRowSelectionTableCell cell = new ProcessInstanceRowSelectionTableCell();
-            ChangeListener<Boolean> selectionChangeListener = (ObservableValue<? extends Boolean> observable1, Boolean oldValue1, Boolean newValue1) -> {
+            ChangeListener<Boolean> selectionChangeListener = (ObservableValue<? extends Boolean> observable, Boolean oldValue, Boolean newValue) -> {
                 ProcessInstanceRow row = (ProcessInstanceRow) cell.getTableRow().getItem();
-                if (newValue1) {
+                if (newValue) {
                     selectionSet.add(row);
                 } else {
                     selectionSet.remove(row);
@@ -451,14 +457,78 @@ public class FXProcessManager extends Application {
             }
             selectionSet.clear();
         });
+        SimpleBooleanProperty allPausableProperty = new SimpleBooleanProperty(false);
+        SimpleBooleanProperty allResumableProperty = new SimpleBooleanProperty(false);
         Button btn3 = new Button("Pausar / Reanudar");
         btn3.setMinWidth(100);
-        btn3.disableProperty().bind(selectionEmptinessBinding);
+        btn3.setDisable(true);
+        selectionSet.addListener(new SetChangeListener<ProcessInstanceRow>() {
+            private boolean hasChanged = false;
+
+            @Override
+            public void onChanged(SetChangeListener.Change<? extends ProcessInstanceRow> change) {
+                if (hasChanged) {
+                    return;
+                }
+                hasChanged = true;
+                Platform.runLater(() -> {
+                    updatePauseToggleButton();
+                    hasChanged = false;
+                });
+            }
+            
+            private void updatePauseToggleButton() {
+                boolean allPausable = false;
+                boolean allResumable = false;
+                for (ProcessInstanceRow row : selectionSet) {
+                    ProcessInstance instance = row.getInstance();
+                    if (!allPausable && !allResumable) {
+                        if (!pm.isPaused(instance)) {
+                            allPausable = true;
+                        } else {
+                            allResumable = true;
+                        }
+                    } else if (allPausable) {
+                        if (pm.isPaused(instance)) {
+                            allPausable = false;
+                            break;
+                        }
+                    } else {
+                        if (!pm.isPaused(instance)) {
+                            allResumable = false;
+                            break;
+                        }
+                    }
+                }
+
+                allPausableProperty.set(allPausable);
+                allResumableProperty.set(allResumable);
+                if (allPausable) {
+                    btn3.setText("Pausar");
+                    btn3.setDisable(false);
+                } else if (allResumable) {
+                    btn3.setText("Reanudar");
+                    btn3.setDisable(false);
+                } else {
+                    btn3.setText("Pausar / Reanudar");
+                    btn3.setDisable(true);
+                }
+            }
+        });
         btn3.setOnAction(event -> {
+            boolean allPausable = allPausableProperty.get();
+            boolean allResumable = allResumableProperty.get();
+            if (!allPausable && !allResumable) {
+                return;
+            }
             ProcessInstanceRow[] selectionSetItems = new ProcessInstanceRow[selectionSet.size()];
             selectionSet.toArray(selectionSetItems);
             for (ProcessInstanceRow row : selectionSetItems) {
-                pm.pause(row.instance);
+                if (allPausable) {
+                    pm.pause(row.instance);
+                } else if (allResumable) {
+                    pm.resume(row.instance);
+                }
                 row.getCheckBox().setSelected(false);
             }
             selectionSet.clear();
@@ -543,7 +613,9 @@ public class FXProcessManager extends Application {
             field.requestFocus();
         });
         Alert errorAlert = new Alert(AlertType.ERROR);
+        Alert rangeErrorAlert = new Alert(AlertType.ERROR);
         errorAlert.setContentText("Entrada inválida");
+        rangeErrorAlert.setContentText("El intervalo minimo permitido es 100ms");
         dialog.setOnCloseRequest((DialogEvent event) -> {
             String input = dialog.getResult();
             if (input == null || input.length() == 0) {
@@ -552,9 +624,13 @@ public class FXProcessManager extends Application {
 
             try {
                 Long time = Long.valueOf(input);
+                if (time != 0 && time < 100) {
+                    rangeErrorAlert.show();
+                    return;
+                }
                 pm.setTickInterval((time > 0) ? time : null);
                 timeField.setText(Long.toString(time));
-            } catch (Exception ex) {
+            } catch (NumberFormatException ex) {
                 errorAlert.show();
                 Logger.getLogger(FXProcessManager.class.getName()).log(Level.SEVERE, null, ex);
             }
