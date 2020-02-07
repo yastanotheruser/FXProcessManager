@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -236,6 +237,7 @@ public class FXProcessManager extends Application {
 
         Button btn1 = new Button("Ejecutar");
         btn1.setMinWidth(100);
+        btn1.disableProperty().bind(comboBox.valueProperty().isNull());
         btn1.setOnAction((ActionEvent event) -> {
             int index = selectionModel.getSelectedIndex();
             if (index == -1) {
@@ -283,6 +285,7 @@ public class FXProcessManager extends Application {
 
         Button btn3 = new Button("Eliminar");
         btn3.setMinWidth(100);
+        btn3.disableProperty().bind(comboBox.valueProperty().isNull());
         btn3.setOnAction((ActionEvent event) -> {
             int index = selectionModel.getSelectedIndex();
             if (index == -1) {
@@ -311,8 +314,8 @@ public class FXProcessManager extends Application {
     private void initActiveProcessesPane() {
         VBox vbox = new VBox();
         TitledPane titledPane = new TitledPane("Procesos activos", vbox);
-        TableView<ProcessInstanceRow> cycleTable = new TableView<>();
-        cycleTable.setRowFactory(row -> new TableRow<ProcessInstanceRow>() {
+        TableView<ProcessInstanceRow> procTable = new TableView<>();
+        procTable.setRowFactory(row -> new TableRow<ProcessInstanceRow>() {
             @Override
             public void updateItem(ProcessInstanceRow item, boolean empty) {
                 super.updateItem(item, empty);
@@ -349,11 +352,11 @@ public class FXProcessManager extends Application {
                 setStyle("-fx-background-color: " + color + ";");
             }
         });
-        cycleTable.setPlaceholder(new Label("No existen procesos activos"));
-        cycleTable.setFocusTraversable(false);
-        cycleTable.setItems(FXCollections.observableArrayList());
+        procTable.setPlaceholder(new Label("No existen procesos activos"));
+        procTable.setFocusTraversable(false);
+        procTable.setItems(FXCollections.observableArrayList());
         ObservableSet<ProcessInstanceRow> selectionSet = FXCollections.observableSet(new HashSet<>());
-        IntegerBinding itemsLengthBinding = Bindings.size(cycleTable.getItems());
+        IntegerBinding itemsLengthBinding = Bindings.size(procTable.getItems());
         IntegerBinding selectionLengthBinding = Bindings.size(selectionSet);
         BooleanBinding emptinessBinding = itemsLengthBinding.isEqualTo(0);
         BooleanBinding selectionEmptinessBinding = selectionLengthBinding.isEqualTo(0);
@@ -361,10 +364,13 @@ public class FXProcessManager extends Application {
         TableColumn checkboxColumn = new TableColumn();
         CheckBox selectAllCheckBox = new CheckBox();
         selectAllCheckBox.disableProperty().bind(emptinessBinding);
+        emptinessBinding.addListener(v -> {
+            System.out.println("your" + v);
+        });
         selectAllCheckBox.setOnAction(event -> {
             boolean selected = selectAllCheckBox.isSelected();
-            ObservableList<ProcessInstanceRow> items = cycleTable.getItems();
-            for (ProcessInstanceRow pi : cycleTable.getItems()) {
+            ObservableList<ProcessInstanceRow> items = procTable.getItems();
+            for (ProcessInstanceRow pi : procTable.getItems()) {
                 CheckBox cb = pi.getCheckBox();
                 cb.setSelected(selected);
                 if (cb.isSelected()) {
@@ -410,7 +416,7 @@ public class FXProcessManager extends Application {
         ptimeColumn.setCellValueFactory(new PropertyValueFactory<>("processTime"));
         TableColumn inputColumn = new TableColumn("Interacción");
         inputColumn.setCellValueFactory(new PropertyValueFactory<>("isReadingString"));
-        cycleTable.getColumns().addAll(
+        procTable.getColumns().addAll(
             checkboxColumn,
             pidColumn,
             processColumn,
@@ -419,10 +425,10 @@ public class FXProcessManager extends Application {
             ptimeColumn,
             inputColumn
         );
-        int columnCount = cycleTable.getColumns().size();
-        cycleTable.getColumns().forEach(c -> {
+        int columnCount = procTable.getColumns().size();
+        procTable.getColumns().forEach(c -> {
             TableColumn column = (TableColumn) c;
-            column.prefWidthProperty().bind(cycleTable.widthProperty().divide(columnCount));
+            column.prefWidthProperty().bind(procTable.widthProperty().divide(columnCount));
         });
 
         HBox controls = new HBox();
@@ -431,6 +437,7 @@ public class FXProcessManager extends Application {
         controls.setAlignment(Pos.CENTER);
         Button btn1 = new Button("Avanzar");
         btn1.setMinWidth(100);
+        btn1.disableProperty().bind(Bindings.size(procTable.itemsProperty().get()).isEqualTo(0));
         btn1.setOnAction(event -> pm.nextTick());
         Button btn2 = new Button("Detener");
         btn2.setMinWidth(100);
@@ -444,7 +451,7 @@ public class FXProcessManager extends Application {
             }
             selectionSet.clear();
         });
-        Button btn3 = new Button("Pausar");
+        Button btn3 = new Button("Pausar / Reanudar");
         btn3.setMinWidth(100);
         btn3.disableProperty().bind(selectionEmptinessBinding);
         btn3.setOnAction(event -> {
@@ -491,25 +498,20 @@ public class FXProcessManager extends Application {
             );
             instances.addAll(pm.collections.get(ProcessState.SUSPENDED));
             instances.addAll(pm.collections.get(ProcessState.INACTIVE));
-            ObservableList<ProcessInstanceRow> rows = cycleTable.getItems();
-            rows.clear();
-            rows.addAll(
-               instances
-                    .stream()
+            ObservableList<ProcessInstanceRow> rows = procTable.getItems();
+            Collection<ProcessInstanceRow> newItems = instances.stream()
                     .sorted(Comparator.comparing(ProcessInstance::getPID))
                     .map(pi -> new ProcessInstanceRow(pi))
-                    .collect(Collectors.toList())
-            );
-
+                    .collect(Collectors.toList());
+            Collection<ProcessInstanceRow> selectedRows = newItems.stream()
+                    .filter(r -> r.getCheckBox().isSelected())
+                    .collect(Collectors.toList());
+            rows.setAll(newItems);
             selectionSet.clear();
-            for (ProcessInstanceRow row : rows) {
-                if (row.getCheckBox().isSelected()) {
-                    selectionSet.add(row);
-                }
-            }
+            selectionSet.addAll(selectedRows);
         });
 
-        vbox.getChildren().addAll(cycleTable, controls);
+        vbox.getChildren().addAll(procTable, controls);
         vbox.setPadding(Insets.EMPTY);
         this.children.add(titledPane);
     }

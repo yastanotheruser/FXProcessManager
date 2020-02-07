@@ -80,11 +80,7 @@ public final class ProcessManager {
 
     public ProcessInstance start(Process process, ProcessPriority priority, int memoryUsage, int processTime) {
         processCount++;
-        boolean hasHighestPriority = priority == ProcessPriority.HIGHEST;
         ProcessInstance instance = new ProcessInstance(process, processCount, priority, memoryUsage, processTime);
-        if (hasHighestPriority && highestPriorityInstance == null) {
-            highestPriorityInstance = instance;
-        }
         instances.add(instance);
         inactiveList.add(instance);
         Set<ProcessState> changes = new HashSet<>();
@@ -152,14 +148,14 @@ public final class ProcessManager {
 
         Set<ProcessState> changes = new HashSet();
         ProcessInstance next = null;
-        if (highestPriorityInstance != null) {
-            if (highestPriorityInstance.info.getState() == ProcessState.INACTIVE) {
-                next = highestPriorityInstance;
-            }
-        } else {
+        System.out.println("" + highestPriorityInstance);
+        if (highestPriorityInstance == null) {
             next = readyQueue.poll();
-            if (next != null && next.getPriority() == ProcessPriority.HIGHEST) {
-                highestPriorityInstance = next;
+            if (next != null) {
+                changes.add(ProcessState.READY);
+                if (next.getPriority() == ProcessPriority.HIGHEST) {
+                    highestPriorityInstance = next;
+                }
             }
         }
 
@@ -169,13 +165,6 @@ public final class ProcessManager {
             inactiveList.toArray(inactiveArr);
             for (ProcessInstance pi : inactiveArr) {
                 if (isPaused(pi)) {
-                    continue;
-                }
-                if (pi == highestPriorityInstance && next == highestPriorityInstance) {
-                    continue;
-                }
-                if (pi.info.isReading()) {
-                    pi.info.setReadState(false);
                     continue;
                 }
                 pi.info.setState(ProcessState.READY);
@@ -189,30 +178,46 @@ public final class ProcessManager {
 
         int suspendedSize = suspendedList.size();
         if (suspendedSize > 0) {
+            boolean didChangeReady = false;
             ProcessInstance[] suspendedArr = new ProcessInstance[suspendedSize];
             suspendedList.toArray(suspendedArr);
             for (ProcessInstance pi : suspendedArr) {
-                pi.info.setState(ProcessState.READY);
+                ProcessInfo info = pi.info;
+                if (info.isReading()) {
+                    info.setReadState(false);
+                    continue;
+                }
+
+                info.setState(ProcessState.READY);
+                suspendedList.remove(pi);
                 readyQueue.add(pi);
+                if (!didChangeReady) {
+                    didChangeReady = true;
+                }
             }
-            suspendedList.clear();
+
             changes.add(ProcessState.SUSPENDED);
-            changes.add(ProcessState.READY);
+            if (didChangeReady) {
+                changes.add(ProcessState.READY);
+            }
         }
 
         if (executingInstance != null) {
             ProcessInfo info = executingInstance.info;
-            info.perform(self.delta);
+            if (!info.isReading() || info.getExecuted() == 0) {
+                info.perform(self.delta);
+            } else {
+                info.setReadState(false);
+            }
             if (info.getExecuted() < executingInstance.getProcessTime()) {
                 if (executingInstance != highestPriorityInstance) {
                     info.setState(ProcessState.SUSPENDED);
                     suspendedList.add(executingInstance);
                     changes.add(ProcessState.SUSPENDED);
                 }
-            } else {
+            } else if (!info.isReading()) {
                 instances.remove(executingInstance);
                 if (executingInstance == highestPriorityInstance) {
-                    executingInstance = null;
                     highestPriorityInstance = null;
                 }
             }
