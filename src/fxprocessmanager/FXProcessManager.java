@@ -355,7 +355,6 @@ public class FXProcessManager extends Application {
                 if (pm.isPaused(instance)) {
                     style += "-fx-opacity: 0.75;";
                 }
-                setStyle(style + "-fx-background-insets: 0, 0, 0, 0;");
             }
         });
         procTable.setPlaceholder(new Label("No existen procesos activos"));
