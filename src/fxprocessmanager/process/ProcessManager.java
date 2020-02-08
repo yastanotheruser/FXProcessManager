@@ -10,6 +10,7 @@ import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
+import javafx.application.Platform;
 
 public final class ProcessManager {
     public static final Comparator<ProcessInstance> hashComparator = Comparator.comparing(ProcessInstance::getHash).reversed();
@@ -33,6 +34,8 @@ public final class ProcessManager {
     private ProcessInstance highestPriorityInstance;
     private int delta;
     private Long tickInterval;
+    private Set<ProcessState> changes;
+    private boolean commitingChanges;
 
     public ProcessManager(int delta, Long tickInterval) {
         if (delta <= 0) {
@@ -55,14 +58,16 @@ public final class ProcessManager {
         processCount = 0;
         executingInstance = null;
         highestPriorityInstance = null;
+        this.delta = delta;
         timer = new Timer();
         ProcessManager that = this;
         setTickInterval(tickInterval);
-        this.delta = delta;
+        changes = new HashSet<>();
+        commitingChanges = false;
     }
 
-    public ProcessManager(int deltaPerTick) {
-        this(deltaPerTick, null);
+    public ProcessManager(int delta) {
+        this(delta, null);
     }
 
     public ProcessInstance[] getInstances() {
@@ -84,8 +89,7 @@ public final class ProcessManager {
         instances.add(instance);
         inactiveList.add(instance);
         Set<ProcessState> changes = new HashSet<>();
-        changes.add(ProcessState.INACTIVE);
-        dispatchWatchers(changes);
+        pushChanges(ProcessState.INACTIVE);
         return instance;
     }
 
@@ -94,14 +98,13 @@ public final class ProcessManager {
             return;
         }
 
-        Set<ProcessState> changes = new HashSet<>();
         if (executingInstance == instance) {
             executingInstance = null;
-            changes.add(ProcessState.EXECUTING);
+            pushChanges(ProcessState.EXECUTING);
         } else {
             ProcessState state = instance.info.getState();
             collections.get(state).remove(instance);
-            changes.add(state);
+            pushChanges(state);
         }
 
         if (highestPriorityInstance == instance) {
@@ -111,36 +114,30 @@ public final class ProcessManager {
         if (isPaused(instance)) {
             pausedInstances.remove(instance);
         }
-
-        dispatchWatchers(changes);
     }
 
     public void pause(ProcessInstance instance) {
-        Set<ProcessState> changes = new HashSet<>();
         ProcessInfo info = instance.info;
         if (executingInstance != instance) {
             ProcessState state = info.getState();
             collections.get(state).remove(instance);
-            changes.add(state);
+            pushChanges(state);
         } else {
             executingInstance = null;
-            changes.add(ProcessState.EXECUTING);
+            pushChanges(ProcessState.EXECUTING);
         }
         info.setState(ProcessState.INACTIVE);
         inactiveList.add(instance);
-        changes.add(ProcessState.INACTIVE);
+        pushChanges(ProcessState.INACTIVE);
         pausedInstances.add(instance);
-        dispatchWatchers(changes);
     }
 
     public boolean resume(ProcessInstance instance) {
         if (!pausedInstances.remove(instance)) {
             return false;
         }
-        
-        Set<ProcessState> changes = new HashSet<>();
-        changes.add(instance.info.getState());
-        dispatchWatchers(changes);
+
+        pushChanges(instance.info.getState());
         return true;
     }
 
@@ -153,12 +150,11 @@ public final class ProcessManager {
             return;
         }
 
-        Set<ProcessState> changes = new HashSet();
         ProcessInstance next = null;
         if (highestPriorityInstance == null) {
             next = readyQueue.poll();
             if (next != null) {
-                changes.add(ProcessState.READY);
+                pushChanges(ProcessState.READY);
                 if (next.getPriority() == ProcessPriority.HIGHEST) {
                     highestPriorityInstance = next;
                 }
@@ -178,8 +174,8 @@ public final class ProcessManager {
             }
             inactiveList.clear();
             inactiveList.addAll(pausedInstances);
-            changes.add(ProcessState.INACTIVE);
-            changes.add(ProcessState.READY);
+            pushChanges(ProcessState.INACTIVE);
+            pushChanges(ProcessState.READY);
         }
 
         int suspendedSize = suspendedList.size();
@@ -202,9 +198,9 @@ public final class ProcessManager {
                 }
             }
 
-            changes.add(ProcessState.SUSPENDED);
+            pushChanges(ProcessState.SUSPENDED);
             if (didChangeReady) {
-                changes.add(ProcessState.READY);
+                pushChanges(ProcessState.READY);
             }
         }
 
@@ -219,7 +215,7 @@ public final class ProcessManager {
                 if (executingInstance != highestPriorityInstance) {
                     info.setState(ProcessState.SUSPENDED);
                     suspendedList.add(executingInstance);
-                    changes.add(ProcessState.SUSPENDED);
+                    pushChanges(ProcessState.SUSPENDED);
                 }
             } else if (!info.isReading()) {
                 instances.remove(executingInstance);
@@ -230,20 +226,18 @@ public final class ProcessManager {
             if (highestPriorityInstance == null) {
                 executingInstance = null;
             }
-            changes.add(ProcessState.EXECUTING);
+            pushChanges(ProcessState.EXECUTING);
         }
 
         if (next != null) {
             next.info.setState(ProcessState.EXECUTING);
             executingInstance = next;
-            changes.add(ProcessState.EXECUTING);
+            pushChanges(ProcessState.EXECUTING);
         }
 
         if (changes.isEmpty()) {
             return;
         }
-
-        dispatchWatchers(changes);
     }
 
     public void setTickInterval(Long tickInterval) {
@@ -284,9 +278,23 @@ public final class ProcessManager {
         tickInterval = null;
     }
 
-    public void dispatchWatchers(Set<ProcessState> changes) {
-        for (ProcessManagerWatcher w : watchers) {
-            w.updated(changes);
+    private void pushChanges(ProcessState state) {
+        if (!changes.contains(state)) {
+            changes.add(state);
         }
+        if (commitingChanges) {
+            return;
+        }
+
+        commitingChanges = true;
+        Platform.runLater(() -> {
+            dispatchWatchers();
+            commitingChanges = false;
+        });
+    }
+
+    private void dispatchWatchers() {
+        watchers.forEach(w -> w.updated(changes));
+        changes.clear();
     }
 }
