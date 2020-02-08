@@ -20,7 +20,6 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.WeakHashMap;
-import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -84,7 +83,7 @@ public class FXProcessManager extends Application {
             put(ProcessPriority.HIGH, "Alta");
             put(ProcessPriority.HIGHEST, "Muy alta");
         }};
-        
+
         private final static Map<ProcessInstance, CheckBox> instanceCheckBoxes = new WeakHashMap<>();
 
         public final static String getLocaleStateString(ProcessState state) {
@@ -327,7 +326,7 @@ public class FXProcessManager extends Application {
                     setStyle("");
                     return;
                 }
-                
+
                 String color = null;
                 ProcessInstance instance = item.getInstance();
                 if (instance.info.getState() != null) {
@@ -356,7 +355,6 @@ public class FXProcessManager extends Application {
                 if (pm.isPaused(instance)) {
                     style += "-fx-opacity: 0.75;";
                 }
-                setStyle(style);
             }
         });
         procTable.setPlaceholder(new Label("No existen procesos activos"));
@@ -476,7 +474,7 @@ public class FXProcessManager extends Application {
                     hasChanged = false;
                 });
             }
-            
+
             private void updatePauseToggleButton() {
                 boolean allPausable = false;
                 boolean allResumable = false;
